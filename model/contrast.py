@@ -1,5 +1,7 @@
 from transformers import AutoTokenizer
 from transformers.models.bert.modeling_bert import BertPreTrainedModel, BertEncoder
+# from transformers.modeling_bert import BertPreTrainedModel,BertEncoder
+# 关于一些库的用法要做笔记！！！
 from transformers.file_utils import ModelOutput
 from torch.nn import CrossEntropyLoss, MSELoss
 import torch
@@ -246,7 +248,7 @@ class BertModel(BertPreTrainedModel):
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
-        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape, device)
+        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape, device) # 扩展attention_mask [3,512]-->[3,1,1,512]([batch_size, num_heads, seq_length, seq_length]),其中1代表attention，-1000代表mask
 
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
@@ -273,7 +275,7 @@ class BertModel(BertPreTrainedModel):
             inputs_embeds=inputs_embeds,
             past_key_values_length=past_key_values_length,
             embedding_weight=embedding_weight,
-        )
+        )# inputs_embeds是input_ids 进行emb，而embedding_output=inputs_embeds+token_type+position
         encoder_outputs = self.encoder(
             embedding_output,
             attention_mask=extended_attention_mask,
@@ -285,7 +287,7 @@ class BertModel(BertPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-        )
+        ) # 使用BertEncoder
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
 
@@ -305,7 +307,7 @@ class BertModel(BertPreTrainedModel):
 
 class ContrastModel(BertPreTrainedModel):
     def __init__(self, config, cls_loss=True, contrast_loss=True, graph=False, layer=1, data_path=None,
-                 multi_label=False, lamb=1, threshold=0.01, tau=1):
+                 multi_label=False, lamb=1, threshold=0.01, tau=1): # 根据父类BertPreTrainedModel进行初始化属性，所以config=BertConfig
         super(ContrastModel, self).__init__(config)
         self.num_labels = config.num_labels
         self.tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
@@ -354,7 +356,7 @@ class ContrastModel(BertPreTrainedModel):
             embedding_weight=contrast_mask,
 
         )
-        pooled_output = outputs[0]
+        pooled_output = outputs[0] # 输出是最后一层的emb last_hidden_state,这里的模型是我们修改后的，只会有一个输出，而不是4个
         pooled_output = self.dropout(self.pooler(pooled_output))
 
         loss = 0
@@ -363,7 +365,7 @@ class ContrastModel(BertPreTrainedModel):
 
         logits = self.classifier(pooled_output)
 
-        if labels is not None:
+        if labels is not None: # 标签是one-hot编码，如果标签不为空，就是train阶段或者eval阶段，此阶段要加入标签信息
             if not self.multi_label:
                 loss_fct = CrossEntropyLoss()
                 target = labels.view(-1)

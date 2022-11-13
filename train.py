@@ -9,7 +9,13 @@ import os
 from eval import evaluate
 from model.contrast import ContrastModel
 
+
 import utils
+
+
+import torch
+print(torch.__version__)
+print(torch.version.cuda)
 
 
 class BertDataset(Dataset):
@@ -18,7 +24,7 @@ class BertDataset(Dataset):
         super(BertDataset, self).__init__()
         self.data = data_utils.load_indexed_dataset(
             data_path + '/tok', None, 'mmap'
-        )
+        ) # 此处使用了fairseq.data.data_utils
         self.labels = data_utils.load_indexed_dataset(
             data_path + '/Y', None, 'mmap'
         )
@@ -64,10 +70,10 @@ class Saver:
 parser = argparse.ArgumentParser()
 parser.add_argument('--lr', type=float, default=3e-5, help='Learning rate.')
 parser.add_argument('--data', type=str, default='WebOfScience', choices=['WebOfScience', 'nyt', 'rcv1'], help='Dataset.')
-parser.add_argument('--batch', type=int, default=12, help='Batch size.')
+parser.add_argument('--batch', type=int, default=3, help='Batch size.')
 parser.add_argument('--early-stop', type=int, default=6, help='Epoch before early stop.')
 parser.add_argument('--device', type=str, default='cuda')
-parser.add_argument('--name', type=str, required=True, help='A name for different runs.')
+parser.add_argument('--name', type=str, default="train", help='A name for different runs.')
 parser.add_argument('--update', type=int, default=1, help='Gradient accumulate steps')
 parser.add_argument('--warmup', default=2000, type=int, help='Warmup steps.')
 parser.add_argument('--contrast', default=1, type=int, help='Whether use contrastive model.')
@@ -97,15 +103,15 @@ if __name__ == '__main__':
     if args.wandb:
         import wandb
         wandb.init(config=args, project='htc')
-    utils.seed_torch(args.seed)
+    utils.seed_torch(args.seed) #设置随机种子， 设置了seed就相当于规定了初始的随机值
     args.name = args.data + '-' + args.name
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased") # 也可使用BertTokenizer,这里的默认词表为30522
     data_path = os.path.join('data', args.data)
-    label_dict = torch.load(os.path.join(data_path, 'bert_value_dict.pt'))
-    label_dict = {i: tokenizer.decode(v, skip_special_tokens=True) for i, v in label_dict.items()}
+    label_dict = torch.load(os.path.join(data_path, 'bert_value_dict.pt')) # 加载标签在tokenizer中对应的索引
+    label_dict = {i: tokenizer.decode(v, skip_special_tokens=True) for i, v in label_dict.items()} #对标签进行解码，还原成真实文字标签，todo:此处好像没用addtoken，后续看看怎么实现的
     num_class = len(label_dict)
 
-    dataset = BertDataset(device=device, pad_idx=tokenizer.pad_token_id, data_path=data_path)
+    dataset = BertDataset(device=device, pad_idx=tokenizer.pad_token_id, data_path=data_path) # 构建自己的dataset，todo:此处使用了fairseq，可以参考其他论文手动实现吗
     model = ContrastModel.from_pretrained('bert-base-uncased', num_labels=num_class,
                                           contrast_loss=args.contrast, graph=args.graph,
                                           layer=args.layer, data_path=data_path, multi_label=args.multi,
@@ -118,7 +124,7 @@ if __name__ == '__main__':
     if args.warmup > 0:
         optimizer = ScheduledOptim(Adam(model.parameters(),
                                         lr=args.lr), args.lr,
-                                   n_warmup_steps=args.warmup)
+                                   n_warmup_steps=args.warmup) # 学习率衰减
     else:
         optimizer = Adam(model.parameters(),
                          lr=args.lr)
@@ -131,10 +137,10 @@ if __name__ == '__main__':
     best_score_micro = 0
     early_stop_count = 0
     if not os.path.exists(os.path.join('checkpoints', args.name)):
-        os.mkdir(os.path.join('checkpoints', args.name))
+        os.makedirs(os.path.join('checkpoints', args.name))
     log_file = open(os.path.join('checkpoints', args.name, 'log.txt'), 'w')
 
-    for epoch in range(1000):
+    for epoch in range(2):
         if early_stop_count >= args.early_stop:
             print("Early stop!")
             break
@@ -145,7 +151,7 @@ if __name__ == '__main__':
         # Train
         pbar = tqdm(train)
         for data, label, idx in pbar:
-            padding_mask = data != tokenizer.pad_token_id
+            padding_mask = data != tokenizer.pad_token_id # 掩盖掉补0的地方，padding_mask是一个bool矩阵
             output = model(data, padding_mask, labels=label, return_dict=True, )
             loss /= args.update
             output['loss'].backward()

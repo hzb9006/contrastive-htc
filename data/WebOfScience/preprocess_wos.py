@@ -65,7 +65,7 @@ stats = {'Root': {'CS': 0, 'Medical': 0, 'Civil': 0, 'ECE': 0, 'biochemistry': 0
 # 5-17 ['Digestive Health', 'Outdoor Health']
 
 def get_data_from_meta():
-    f = open(FILE_DIR, 'r')
+    f = open(FILE_DIR, 'r',encoding="utf-16")
     origin_txt = f.readlines()
     f.close()
     data = []

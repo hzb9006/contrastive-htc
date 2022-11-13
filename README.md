@@ -7,12 +7,14 @@ Text Classification" in ACL 2022.
 ## Requirements
 
 * Python >= 3.6
-* torch >= 1.6.0
+* torch >= 1.6.0 完成！
 * transformers == 4.2.1
-* fairseq >= 0.10.0
-* torch-geometric == 1.7.2
-* torch-scatter == 2.0.8
-* torch-sparse ==  0.6.12
+* fairseq == 0.10.0 一定要是这个版本，不然用法不一样
+
+装下面三个库要在GPU环境下安装
+* torch-geometric == 1.7.2 这是图神经网络库（PyG）直接pip
+* torch-scatter == 2.0.8  （ 2.0.9 也可）
+* torch-sparse ==  0.6.12 （ 0.6.14 也可）--这个使用软件包安装0.6.14版本的
 
 ## Preprocess
 

@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from transformers import AutoTokenizer
 from transformers.activations import ACT2FN
 import os
+import numpy as np
 
 from torch_geometric.nn import GCNConv, GATConv
 
@@ -200,7 +201,7 @@ class GraphLayer(nn.Module):
                 return self.intermediate_act_fn(x)
 
         if GRAPH == 'GRAPHORMER':
-            self.hir_attn = SelfAttention(config)
+            self.hir_attn = SelfAttention(config) # 使用了多头注意力
         elif GRAPH == 'GCN':
             self.hir_attn = GCNConv(config.hidden_size, config.hidden_size)
         elif GRAPH == 'GAT':
@@ -261,40 +262,40 @@ class GraphEncoder(nn.Module):
 
         if graph:
             label_hier = torch.load(os.path.join(data_path, 'slot.pt'))
-            path_dict = {}
-            num_class = 0
-            for s in label_hier:
-                for v in label_hier[s]:
+            path_dict = {} # 键值对，键是子节点，值是父节点，代表子节点属于哪个父节点
+            num_class = 0 # 获取类别数
+            for s in label_hier: # 获取根节点
+                for v in label_hier[s]: # 获取子节点
                     path_dict[v] = s
                     if num_class < v:
                         num_class = v
             if GRAPH == 'GRAPHORMER':
                 num_class += 1
-                for i in range(num_class):
+                for i in range(num_class):# path_dict增加，父节点的父节点是他自己
                     if i not in path_dict:
                         path_dict[i] = i
                 self.inverse_label_list = {}
 
-                def get_root(path_dict, n):
+                def get_root(path_dict, n):# 获取根节点
                     ret = []
-                    while path_dict[n] != n:
+                    while path_dict[n] != n:# 不是根节点
                         ret.append(n)
-                        n = path_dict[n]
+                        n = path_dict[n] # 把n的父节点赋值给n，这样下次循环时会跳出循环
                     ret.append(n)
                     return ret
 
                 for i in range(num_class):
-                    self.inverse_label_list.update({i: get_root(path_dict, i) + [-1]})
+                    self.inverse_label_list.update({i: get_root(path_dict, i) + [-1]}) # 把[父节点，子节点] 颠倒成[子节点，父节点]，根节点的父节点为-1，如12:[12,0,-1]
                 label_range = torch.arange(len(self.inverse_label_list))
                 self.label_id = label_range
                 node_list = {}
 
-                def get_distance(node1, node2):
+                def get_distance(node1, node2): # node1从distance_mat中按行取值，node2从hier_mat_t中按行取值
                     p = 0
                     q = 0
                     node_list[(node1, node2)] = a = []
                     node1 = self.inverse_label_list[node1]
-                    node2 = self.inverse_label_list[node2]
+                    node2 = self.inverse_label_list[node2] # 获取节点及其父节点
                     while p < len(node1) and q < len(node2):
                         if node1[p] > node2[q]:
                             a.append(node1[p])
@@ -306,53 +307,53 @@ class GraphEncoder(nn.Module):
 
                         else:
                             break
-                    return p + q
+                    return p + q # 1. 节点到他本身的距离为0 ； 2.
 
-                self.distance_mat = self.label_id.reshape(1, -1).repeat(self.label_id.size(0), 1)
-                hier_mat_t = self.label_id.reshape(-1, 1).repeat(1, self.label_id.size(0))
-                self.distance_mat.map_(hier_mat_t, get_distance)
-                self.distance_mat = self.distance_mat.view(1, -1)
+                self.distance_mat = self.label_id.reshape(1, -1).repeat(self.label_id.size(0), 1) # (141,)--->(1,141)-->(141,141)
+                hier_mat_t = self.label_id.reshape(-1, 1).repeat(1, self.label_id.size(0)) # 第一行为0，第二行为1，一共141行
+                self.distance_mat.map_(hier_mat_t, get_distance) # map_(hier_mat_t, get_distance)表示对hier_mat_t中的每个元素都应用get_distance函数,其中每个元素按行读取,节点之间的距离是两个节点到他们最近的共同节点的距离
+                self.distance_mat = self.distance_mat.view(1, -1) # (141,141)-->(1,19881),每一行都进行拼接，表示标签到标签之间的距离，0-0，1-0，2-0，3-0
                 self.edge_mat = torch.zeros(len(self.inverse_label_list), len(self.inverse_label_list), 15,
-                                            dtype=torch.long)
+                                            dtype=torch.long) #(141,141,15)
                 for i in range(len(self.inverse_label_list)):
                     for j in range(len(self.inverse_label_list)):
-                        edge_list = node_list[(i, j)]
-                        self.edge_mat[i, j, :len(edge_list)] = torch.tensor(edge_list) + 1
-                self.edge_mat = self.edge_mat.view(-1, self.edge_mat.size(-1))
+                        edge_list = node_list[(i, j)] # 获取节点到节点之间的通路
+                        self.edge_mat[i, j, :len(edge_list)] = torch.tensor(edge_list) + 1 # 因为root节点为-1，所以+1，经过root节点，就是经过0节点
+                self.edge_mat = self.edge_mat.view(-1, self.edge_mat.size(-1)) # 保存的是节点到节点之间边的信息，经过的值要-1，如0-0，1-0，2-0，3-0的边
 
                 self.id_embedding = nn.Embedding(len(self.inverse_label_list) + 1, config.hidden_size,
-                                                 len(self.inverse_label_list))
-                self.distance_embedding = nn.Embedding(20, 1, 0)
-                self.edge_embedding = nn.Embedding(len(self.inverse_label_list) + 1, 1, 0)
+                                                 len(self.inverse_label_list)) #id_embedding:（142，768，padding_idx=141）
+                self.distance_embedding = nn.Embedding(20, 1, 0) #(20,1,padding_idx=0)
+                self.edge_embedding = nn.Embedding(len(self.inverse_label_list) + 1, 1, 0) #（142,1,padding_idx=0)
                 self.label_id = nn.Parameter(self.label_id, requires_grad=False)
                 self.edge_mat = nn.Parameter(self.edge_mat, requires_grad=False)
                 self.distance_mat = nn.Parameter(self.distance_mat, requires_grad=False)
-            self.edge_list = [[v, i] for v, i in path_dict.items()]
-            self.edge_list += [[i, v] for v, i in path_dict.items()]
+            self.edge_list = [[v, i] for v, i in path_dict.items()] #[子节点，父节点] 141
+            self.edge_list += [[i, v] for v, i in path_dict.items()] # [子节点，父节点] 141+ [父节点，子节点] 141
             self.edge_list = nn.Parameter(torch.tensor(self.edge_list).transpose(0, 1), requires_grad=False)
 
     def forward(self, inputs_embeds, attention_mask, labels, embeddings):
         label_mask = self.label_name != self.tokenizer.pad_token_id
-        # full name
+        # full name，label_emb对应论文里面的name_emb,把每个标签的词使用bert进行emb后相加求平均作为该标签的emb
         label_emb = embeddings(self.label_name)
-        label_emb = (label_emb * label_mask.unsqueeze(-1)).sum(dim=1) / label_mask.sum(dim=1).unsqueeze(-1)
-        label_emb = label_emb.unsqueeze(0)
+        label_emb = (label_emb * label_mask.unsqueeze(-1)).sum(dim=1) / label_mask.sum(dim=1).unsqueeze(-1) # label_emb * label_mask.unsqueeze(-1)-->(141,10,768)把填充的emb置为0，对于3维的，dim=1是按照x轴进行累加，对于二维的，dim=1是y轴，所以 label_mask.sum(dim=1)可以获取每个标签的有效长度,此处把每个标签对应的有效的词的embedding做了累加求平均
+        label_emb = label_emb.unsqueeze(0) # （141，768）-->(1,141,768)
 
-        label_attn_mask = torch.ones(1, label_emb.size(1), device=label_emb.device)
+        label_attn_mask = torch.ones(1, label_emb.size(1), device=label_emb.device) # label_attn_mask-->(1,141)
 
         extra_attn = None
-
-        self_attn_mask = (label_attn_mask * 1.).t().mm(label_attn_mask * 1.).unsqueeze(0).unsqueeze(0)
+        # cross_attn_mask是（3，512，141），矩阵中如果是pad，则为0，如果是真实的输入，是1 todo：表示交叉attention？
+        self_attn_mask = (label_attn_mask * 1.).t().mm(label_attn_mask * 1.).unsqueeze(0).unsqueeze(0) # (label_attn_mask * 1.).t()-->(141,1)*(1,141)=(141,141)-->(1,1,141,141)
         cross_attn_mask = (attention_mask * 1.).unsqueeze(-1).bmm(
-            (label_attn_mask.unsqueeze(0) * 1.).repeat(attention_mask.size(0), 1, 1))
+            (label_attn_mask.unsqueeze(0) * 1.).repeat(attention_mask.size(0), 1, 1)) #  (attention_mask * 1.) 则true为1，false为0，(attention_mask * 1.).unsqueeze(-1)：(3,512)-->(3,512,1)  ,(label_attn_mask.unsqueeze(0) * 1.).repeat(attention_mask.size(0), 1, 1) -->(3,1,141),其中每个batch是一样的
         expand_size = label_emb.size(-2) // self.label_name.size(0)
         if self.graph:
-            if GRAPH == 'GRAPHORMER':
+            if GRAPH == 'GRAPHORMER': # 加入id_emb
                 label_emb += self.id_embedding(self.label_id[:, None].expand(-1, expand_size)).view(1, -1,
-                                                                                                    self.config.hidden_size)
+                                                                                                    self.config.hidden_size) # 这是论文里的label_embedding,把141个标签随机初始化
                 extra_attn = self.distance_embedding(self.distance_mat) + self.edge_embedding(self.edge_mat).sum(
                     dim=1) / (
-                                     self.distance_mat.view(-1, 1) + 1e-8)
+                                     self.distance_mat.view(-1, 1) + 1e-8) # distance_embedding是随机初始化的（20，1）
                 extra_attn = extra_attn.view(self.label_num, 1, self.label_num, 1).expand(-1, expand_size, -1,
                                                                                           expand_size)
                 extra_attn = extra_attn.reshape(self.label_num * expand_size, -1)

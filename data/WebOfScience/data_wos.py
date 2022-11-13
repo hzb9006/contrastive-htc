@@ -1,3 +1,7 @@
+from fairseq.data import indexed_dataset
+from fairseq.binarizer import Binarizer
+
+
 from transformers import AutoTokenizer
 import os
 import torch
@@ -21,32 +25,30 @@ if __name__ == '__main__':
         for line in f.readlines():
             line = json.loads(line)
             source.append(tokenizer.encode(line['doc_token'].strip().lower(), truncation=True))
-            labels.append(line['doc_label'])
-    for l in labels:
+            labels.append(line['doc_label']) # 此处不对标签进行encoding
+    for l in labels: #通过循环把根节点加入label_dict
         if l[0] not in label_dict:
             label_dict[l[0]] = len(label_dict)
-    for l in labels:
+    for l in labels:# 把子节点加入label_dict，构建标签的索引
         assert len(l) == 2
         if l[1] not in label_dict:
             label_dict[l[1]] = len(label_dict)
-        label_ids.append([label_dict[l[0]], label_dict[l[1]]])
-        hiera[label_ids[-1][0]].add(label_ids[-1][1])
-    value_dict = {i: tokenizer.encode(v.lower(), add_special_tokens=False) for v, i in label_dict.items()}
-    torch.save(value_dict, 'bert_value_dict.pt')
+        label_ids.append([label_dict[l[0]], label_dict[l[1]]]) # 获取每句话的标签在label_dict中的索引
+        hiera[label_ids[-1][0]].add(label_ids[-1][1]) # 为父节点增加子节点，构建标签的层级关系
+    value_dict = {i: tokenizer.encode(v.lower(), add_special_tokens=False) for v, i in label_dict.items()} # v是对应的标签， i是标签在label_dict中的索引，直接encodeing会造成把一个标签编码成多个值
+    torch.save(value_dict, 'bert_value_dict.pt') # todo：这里直接encoding和addtoken，效果一样吗
     torch.save(hiera, 'slot.pt')
 
-    with open('tok.txt', 'w') as f:
+    with open('tok.txt', 'w') as f: # tok.txt是每句话的embeding
         for s in source:
             f.writelines(' '.join(map(lambda x: str(x), s)) + '\n')
-    with open('Y.txt', 'w') as f:
+    with open('Y.txt', 'w') as f: # Y.txt是每个label对应的one-hot编码
         for s in label_ids:
             one_hot = [0] * len(label_dict)
             for i in s:
                 one_hot[i] = 1
             f.writelines(' '.join(map(lambda x: str(x), one_hot)) + '\n')
 
-    from fairseq.binarizer import Binarizer
-    from fairseq.data import indexed_dataset
 
     for data_path in ['tok', 'Y']:
         offsets = Binarizer.find_offsets(data_path + '.txt', 1)
